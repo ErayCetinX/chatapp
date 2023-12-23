@@ -1,0 +1,35 @@
+{
+  "name": "chatbackend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "prisma": "npx prisma migrate dev --name init && prisma db push",
+    "compile": "tsc",
+    "start": "npm run compile && node ./dist/src/index.js",
+    "start:dev": "nodemon ./src/index.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@apollo/server": "^4.9.4",
+    "@graphql-tools/schema": "^10.0.0",
+    "@prisma/client": "^5.4.2",
+    "bcrypt": "^5.1.1",
+    "graphql": "^16.8.1",
+    "graphql-redis-subscriptions": "^2.6.0",
+    "graphql-ws": "^5.14.2",
+    "ioredis": "^5.3.2",
+    "jsonwebtoken": "^9.0.2",
+    "ts-node": "^10.9.1",
+    "uuid": "^9.0.1",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.6",
+    "nodemon": "^3.0.1",
+    "prisma": "^5.4.2",
+    "typescript": "^5.2.2"
+  }
+}

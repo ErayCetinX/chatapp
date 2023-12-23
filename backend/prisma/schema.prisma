@@ -1,0 +1,95 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  uuid        String   @id @unique @db.VarChar(64)
+  username    String   @unique @db.VarChar(30)
+  email       String   @unique @db.VarChar(70)
+  password    String   @db.VarChar(64)
+  deviceToken String   @db.VarChar(255)
+  avatarUrl   String   @db.VarChar(255)
+  isVerifed   Boolean  @default(false) @db.Boolean
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now())
+
+  senderUser            Message[]       @relation(name: "senderUserUuid")
+  recipientUser         Message[]       @relation(name: "recipientUserUuid")
+  groupMember           GroupMember[]   @relation(name: "groupMember")
+  feedBackUserEmail     FeedBack[]      @relation(name: "userEmail")
+  feedBackUserUuid      FeedBack[]      @relation(name: "userUuid")
+  senderNotifications   Notifications[] @relation(name: "senderNotification")
+  recevierNotifications Notifications[] @relation(name: "recevierNotification")
+}
+
+model Message {
+  uuid                   String   @id @unique @db.VarChar(64)
+  text                   String   @db.VarChar(1000)
+  senderUuid             String   @db.VarChar(64)
+  recipientUuid          String   @db.VarChar(64)
+  pictureUrl             String   @db.VarChar(255)
+  replyMessage           String?  @db.VarChar(1000)
+  replyMessagePictureUrl String?  @db.VarChar(255)
+  replyMessageUserUuid   String?  @db.VarChar(64)
+  groupChatUuid          String?  @db.VarChar(64)
+  isReply                Boolean  @default(false) @db.Boolean
+  isPicture              Boolean  @default(false) @db.Boolean
+  createdAt              DateTime @default(now())
+
+  senderUser    User @relation(name: "senderUserUuid", fields: [senderUuid], references: [uuid], onDelete: Cascade, onUpdate: Cascade)
+  recipientUser User @relation(name: "recipientUserUuid", fields: [recipientUuid], references: [uuid])
+}
+
+model GroupChat {
+  uuid           String @id @unique @db.VarChar(64)
+  groupName      String
+  description    String @default("") @db.VarChar(8000)
+  ownerUserUuid  String @db.VarChar(64)
+  groupAvatarUrl String @db.VarChar(64)
+  memberCount    Int    @default(0) @db.Integer
+
+  groupMember GroupMember[] @relation(name: "group")
+}
+
+model GroupMember {
+  uuid      String   @id @unique @db.VarChar(64)
+  groupUuid String   @db.VarChar(64)
+  userUuid  String   @db.VarChar(64)
+  isAdmin   Boolean  @default(false) @db.Boolean // her gelen admin değildir
+  createdAt DateTime @default(now())
+
+  member    User      @relation(name: "groupMember", fields: [userUuid], references: [uuid], onDelete: Cascade, onUpdate: Cascade)
+  groupChat GroupChat @relation(name: "group", fields: [groupUuid], references: [uuid], onDelete: Cascade, onUpdate: Cascade)
+}
+
+model FeedBack {
+  uuid            String   @id @unique @db.VarChar(64)
+  content         String   @db.VarChar(1000)
+  senderUserUuid  String   @db.VarChar(64)
+  senderUserEmail String   @db.VarChar(70)
+  type            String   @db.VarChar(50)
+  createdAt       DateTime @default(now())
+
+  userEmail User @relation(name: "userEmail", fields: [senderUserEmail], references: [email])
+  userUuid  User @relation(name: "userUuid", fields: [senderUserUuid], references: [uuid])
+}
+
+model Notifications {
+  uuid         String   @id @unique @db.VarChar(64)
+  content      String   @db.VarChar(1200)
+  senderUuid   String   @db.VarChar(64)
+  recevierUuid String   @db.VarChar(64)
+  groupUuid    String?  @db.VarChar(64)
+  createdAt    DateTime @default(now())
+
+  senderUser   User @relation(name: "senderNotification", fields: [senderUuid], references: [uuid], onDelete: Cascade, onUpdate: Cascade)
+  recevierUser User @relation(name: "recevierNotification", fields: [recevierUuid], references: [uuid], onDelete: Cascade, onUpdate: Cascade)
+}
