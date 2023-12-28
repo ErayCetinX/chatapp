@@ -5,11 +5,318 @@ import token from "../../src/helpers/token";
 import bcrypt from "bcrypt";
 import { v4 } from "uuid";
 import { withFilter } from "graphql-subscriptions";
+import { redis } from "../../redis";
 
 import { IUser } from "../../src/types/user";
 
 const resolvers = {
   Mutation: {
+    async ReplyMessage(
+      _: unknown,
+      {
+        replyMessage: { MessageUuid, recipientUserUuid, pictureUrl, text },
+      }: {
+        replyMessage: {
+          MessageUuid: string;
+          recipientUserUuid: string;
+          pictureUrl: string;
+          text: string;
+        };
+      },
+      { getLoggedInUserDetails, prisma }: Context
+    ) {
+      // İf no getLoggedInUserDetails
+      if (!getLoggedInUserDetails) {
+        throw new Error("Oturum Açınız");
+      }
+
+      const messages = await prisma.message.findUnique({
+        where: {
+          uuid: MessageUuid,
+        },
+      });
+
+      // We define recipient
+      const recipient = await prisma.user.findUnique({
+        where: { uuid: recipientUserUuid },
+      });
+
+      // İf no recipient
+      if (!recipient) {
+        throw new Error("User not found");
+      } else if (recipient.uuid === getLoggedInUserDetails.uuid) {
+        throw new Error("Kendine mesaj gönderemezsiniz!");
+      }
+
+      if (!messages) {
+        throw new Error("Message not found");
+      }
+
+      // Eğer yanıtlanan resim ise
+      if (pictureUrl) {
+        const message = await prisma.message.create({
+          data: {
+            uuid: v4(),
+            senderUuid: getLoggedInUserDetails.uuid,
+            recipientUuid: recipientUserUuid,
+            text,
+            pictureUrl,
+            replyMessagePictureUrl:
+              messages && messages.pictureUrl ? messages.pictureUrl : "",
+            replyMessage: messages && messages.text ? messages.text : "",
+            replyMessageUserUuid:
+              messages && messages.senderUuid ? messages.senderUuid : "",
+            isPicture: true,
+            isReply: true,
+          },
+        });
+
+        if (message) {
+          const UserNoti = await prisma.notifications.create({
+            data: {
+              uuid: v4(),
+              content: `${getLoggedInUserDetails.username} sent you a message.`,
+              senderUuid: getLoggedInUserDetails.uuid, // Gönderen
+              recevierUuid: recipientUserUuid, // Alıcı
+            },
+          });
+
+          pubsub.publish("New Notifications", {
+            Notifications: UserNoti,
+          });
+
+          // await User.update(
+          //   { user_notifications: Sequelize.literal('user_notifications + 1'), },
+          //   { where: { uuid: recipientUserUuid, }, }
+          // );
+        }
+
+        pubsub.publish("newMessage", {
+          newMessage: message,
+          getLoggedInUserDetails,
+        });
+
+        return message;
+      }
+
+      // // if empity text
+      // if (text.trim() === '') {
+      //   throw new UserInputError('mesaj boş olamaz');
+      // }
+
+      const message = await prisma.message.create({
+        data: {
+          uuid: v4(),
+          senderUuid: getLoggedInUserDetails.uuid,
+          recipientUuid: recipientUserUuid,
+          text,
+          pictureUrl: "",
+          replyMessagePictureUrl:
+            messages && messages.pictureUrl ? messages.pictureUrl : "",
+          replyMessage: messages && messages.text ? messages.text : "",
+          replyMessageUserUuid:
+            messages && messages.senderUuid ? messages.senderUuid : "",
+          isPicture: false,
+          isReply: true,
+        },
+      });
+
+      if (message) {
+        const UserNoti = await prisma.notifications.create({
+          data: {
+            uuid: v4(),
+            content: `${getLoggedInUserDetails.username} sent you a message.`,
+            senderUuid: getLoggedInUserDetails.uuid, // Gönderen
+            recevierUuid: recipientUserUuid, // Alıcı
+          },
+        });
+
+        pubsub.publish("New Notifications", {
+          Notifications: UserNoti,
+        });
+
+        // await User.update(
+        //   { user_notifications: Sequelize.literal('user_notifications + 1'), },
+        //   { where: { uuid: recipientUserUuid, }, }
+        // );
+      }
+
+      pubsub.publish("newMessage", {
+        newMessage: message,
+        getLoggedInUserDetails,
+      });
+
+      return message;
+    },
+    async CreateInbox(
+      _: unknown,
+      { UserUuid }: { UserUuid: string },
+      { getLoggedInUserDetails, prisma }: Context
+    ) {
+      try {
+        const users: IUser = await prisma.user.findUnique({
+          where: {
+            uuid: UserUuid,
+          },
+        });
+
+        if (!users) {
+          return {
+            node: [],
+            status: false,
+            error: "User not found",
+          };
+        }
+
+        if (getLoggedInUserDetails.uuid === UserUuid) {
+          return {
+            status: false,
+            error: "You cannot open a message box with yourself",
+          };
+        }
+
+        const userUuid = [getLoggedInUserDetails.uuid, users.uuid];
+
+        const userMessageBoxCacheKey = `messageBox: ${getLoggedInUserDetails.uuid}`;
+        const pipeline = await redis.pipeline();
+
+        const existBefore = await prisma.messageBox.findMany({
+          where: {
+            request: { in: userUuid },
+            accepting: { in: userUuid },
+          },
+        });
+
+        // Eğer böyle bir Inbox varsa mesajları göster
+        if (existBefore.length > 0) {
+          // Burada mesajları aldık
+          const messages = await prisma.message.findMany({
+            where: {
+              senderUuid: { in: userUuid },
+              recipientUuid: { in: userUuid },
+            },
+            orderBy: { createdAt: "desc" },
+          });
+
+          // Return ile verdik
+          return {
+            node: messages,
+            status: true,
+            error: "No Error, showing messages",
+          };
+        }
+
+        // Eğer böyle bir Inbox yoksa
+        // yani existBefore === false
+        const messageBox = await prisma.messageBox.create({
+          data: {
+            uuid: v4(),
+            request: getLoggedInUserDetails.uuid,
+            accepting: UserUuid,
+          },
+        });
+
+        users.InboxUuid = messageBox.uuid;
+
+        // Cache'e veri eklemek için kullanılan komutlar
+        pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(users));
+        pipeline.expire(userMessageBoxCacheKey, 300); // 5 dakika süreyle cache'te tutulacak
+        pipeline.exec();
+
+        // Daha önce veri olmadığı için boş array vereceğiz
+        return {
+          node: [],
+          status: true,
+          error: "",
+        };
+      } catch (error) {
+        return {
+          status: false,
+          error: `${error}`,
+        };
+      }
+    },
+    async DeleteInbox(
+      _: unknown,
+      { InboxUuid }: { InboxUuid: string },
+      { prisma, getLoggedInUserDetails }: Context
+    ) {
+      try {
+        const existBefore = await prisma.messageBox.findUnique({
+          where: {
+            uuid: InboxUuid,
+          },
+        });
+
+        // Not found inbox
+        if (!existBefore) {
+          return {
+            status: false,
+            error: "Inbox not found.",
+          };
+        }
+
+        // Eğerki inbox varsa mesajlar silenecek ve inbox silinecek
+
+        const user = [existBefore.request, existBefore.accepting];
+
+        // Mesajları silmeye gerek yok tekrar açılırsa mesajlar gözüksün
+        // await Message.destroy({
+        //   where: {
+        //     from: { [Op.in]: user },
+        //     to: { [Op.in]: user },
+        //   },
+        //   truncate: true,
+        // });
+
+        const userMessageBoxCacheKey = `messageBox: ${getLoggedInUserDetails.uuid}`;
+        // await redis.del(userMessageBoxCacheKey);
+        const userMessageBox = await redis.lrange(
+          userMessageBoxCacheKey,
+          0,
+          -1
+        );
+        const allMessage = userMessageBox.map((d) => JSON.parse(d));
+
+        if (allMessage.length > 0) {
+          const multi = redis.multi(); // multi komutunu burada çalıştırıyoruz
+
+          allMessage.forEach(async (user) => {
+            await multi.lrem(userMessageBoxCacheKey, 0, JSON.stringify(user));
+
+            await prisma.messageBox.delete({
+              where: {
+                uuid: InboxUuid,
+              },
+            });
+          });
+
+          await multi.exec();
+          return {
+            status: true,
+            error: "",
+          };
+        }
+
+        console.log(InboxUuid);
+        // destroy Inbox
+        await prisma.messageBox.delete({
+          where: {
+            uuid: InboxUuid,
+          },
+        });
+
+        return {
+          status: true,
+          error: "",
+        };
+      } catch (error) {
+        return {
+          status: false,
+          error,
+        };
+      }
+    },
     registerUser: async (
       _: any,
       { newUser: { username, password, email, confirmPassword, DeviceToken } },
@@ -93,15 +400,15 @@ const resolvers = {
     signIn: async (
       _: unknown,
       {
-        sigInUser: { email, password, DeviceToken },
+        sigInUser: { username, password, DeviceToken },
       }: {
-        sigInUser: { email: string; password: string; DeviceToken: string };
+        sigInUser: { username: string; password: string; DeviceToken: string };
       },
       { prisma }: Context
     ) => {
       // Fristname is null
-      if (email.trim() === "") {
-        throw new Error("Your email cannot be blank");
+      if (username.trim() === "") {
+        throw new Error("Your username cannot be blank");
       }
 
       // Password is null
@@ -112,13 +419,13 @@ const resolvers = {
       // User check
       const user: IUser = await prisma.user.findUnique({
         where: {
-          email,
+          username,
         },
       });
 
       // İf there is no username
       if (!user) {
-        throw new Error("There is no user with the email you entered!");
+        throw new Error("There is no user with the username you entered!");
       }
 
       // Compare password
@@ -153,7 +460,7 @@ const resolvers = {
         };
       }
     },
-    createMessage: async (
+    async createMessage(
       _: unknown,
       {
         newMessage: { recipientUserUuid, text, pictureUrl },
@@ -165,7 +472,7 @@ const resolvers = {
         };
       },
       { prisma, getLoggedInUserDetails }: Context
-    ) => {
+    ) {
       try {
         // İf no getLoggedInUserDetails
         if (!getLoggedInUserDetails) {
@@ -190,55 +497,6 @@ const resolvers = {
           throw new Error("Kendine mesaj gönderemezsiniz!");
         }
 
-        if (pictureUrl) {
-          const message = await prisma.message.create({
-            data: {
-              uuid: v4(),
-              senderUuid: getLoggedInUserDetails.uuid,
-              recipientUuid: recipientUserUuid,
-              text,
-              pictureUrl,
-              isPicture: true,
-              isReply: false,
-            },
-          });
-
-          if (message) {
-            const UserNoti = await prisma.notifications.create({
-              data: {
-                uuid: v4(),
-                content: `${getLoggedInUserDetails.username} sent you a message.`,
-                senderUuid: getLoggedInUserDetails.uuid, // Gönderen
-                recevierUuid: recipientUserUuid, // Alıcı
-              },
-            });
-
-            // if (
-            //   recipient.deviceToken !== null &&
-            //   recipient.deviceToken.length > 0
-            // ) {
-            //   admin.messaging().send({
-            //     notification: {
-            //       title: "Whoolly",
-            //       body: `${getLoggedInUserDetails.username} sent you a picture.`,
-            //     },
-            //     token: recipient.deviceToken,
-            //   });
-            // }
-
-            pubsub.publish("New Notifications", {
-              Notifications: UserNoti,
-            });
-          }
-
-          pubsub.publish("newMessage", {
-            newMessage: message,
-            getLoggedInUserDetails,
-          });
-
-          return message;
-        }
-
         // İf empity text
         if (text.trim() === "") {
           throw new Error("mesaj boş olamaz");
@@ -255,34 +513,6 @@ const resolvers = {
             isReply: false,
           },
         });
-
-        if (message) {
-          const UserNoti = await prisma.notifications.create({
-            data: {
-              uuid: v4(),
-              content: `${getLoggedInUserDetails.username} sent you a message.`,
-              senderUuid: getLoggedInUserDetails.uuid, // Gönderen
-              recevierUuid: recipientUserUuid, // Alıcı
-            },
-          });
-
-          // if (
-          //   recipient.deviceToken !== null &&
-          //   recipient.deviceToken.length > 0
-          // ) {
-          //   admin.messaging().send({
-          //     notification: {
-          //       title: "Whoolly",
-          //       body: `${getLoggedInUserDetails.username}: ${text}`,
-          //     },
-          //     token: recipient.deviceToken,
-          //   });
-          // }
-
-          pubsub.publish("New Notifications", {
-            Notifications: UserNoti,
-          });
-        }
 
         pubsub.publish("newMessage", {
           newMessage: message,
@@ -786,6 +1016,159 @@ const resolvers = {
     },
   },
   Query: {
+    async userInbox(
+      _: unknown,
+      __: unknown,
+      { prisma, getLoggedInUserDetails }: Context
+    ) {
+      if (!getLoggedInUserDetails) {
+        return {
+          node: [],
+          error: "Unauthenticated",
+        };
+      }
+
+      // Let InboxUuid;
+      const userMessageBoxCacheKey = `messageBox: ${getLoggedInUserDetails.uuid}`;
+      // await redis.del(userMessageBoxCacheKey);
+      const userMessageBox = await redis.lrange(userMessageBoxCacheKey, 0, -1);
+      console.log(userMessageBox);
+
+      if (userMessageBox.length === 0) {
+        // !! burada en son mesaja göre ayarlar
+        const UsersInbox = await prisma.messageBox.findMany({
+          orderBy: {
+            createdAt: "desc",
+          },
+        });
+
+        const pipeline = await redis.pipeline();
+
+        const node = await UsersInbox.map(
+          async (UserInbox: {
+            request: string;
+            accepting: string;
+            uuid: string;
+          }) => {
+            // Const possible = [UserInbox.accepting, getLoggedInUserDetails.uuid];
+            // const possibleI = [UserInbox.accepting, getLoggedInUserDetails.uuid];
+
+            // Inbox uuid almak için basit bir sistem
+            // InboxUuid = UserInbox.uuid;
+
+            if (getLoggedInUserDetails.uuid === UserInbox.request) {
+              const users: IUser[] | any[] = await prisma.user.findMany({
+                where: {
+                  uuid: UserInbox.accepting,
+                },
+              });
+
+              for (let index = 0; index < users.length; index += 1) {
+                const user: IUser = users[index];
+                // Console.log(user);
+                user.InboxUuid = UserInbox.uuid;
+                const userUuid = [
+                  UserInbox.accepting,
+                  getLoggedInUserDetails.uuid,
+                ];
+                const messages = await prisma.message.findMany({
+                  where: {
+                    senderUuid: {
+                      in: userUuid,
+                    },
+                    recipientUuid: {
+                      in: userUuid,
+                    },
+                  },
+                  orderBy: {
+                    createdAt: "desc",
+                  },
+                });
+                console.log("first", messages);
+
+                if (messages.length === 0) {
+                  user.lastMessage = "";
+
+                  pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(user));
+                  return user;
+                } else {
+                  user.lastMessage = messages[0].text;
+
+                  pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(user));
+                  return user;
+                }
+              }
+            }
+
+            if (getLoggedInUserDetails.uuid === UserInbox.accepting) {
+              const users: IUser[] | any[] = await prisma.user.findMany({
+                where: {
+                  uuid: UserInbox.request,
+                },
+              });
+
+              for (let index = 0; index < users.length; index += 1) {
+                const user: IUser = users[index];
+                // Console.log(user);
+                user.InboxUuid = UserInbox.uuid;
+
+                const userUuid = [
+                  UserInbox.request,
+                  getLoggedInUserDetails.uuid,
+                ];
+
+                const messages = await prisma.message.findMany({
+                  where: {
+                    senderUuid: {
+                      in: userUuid,
+                    },
+                    recipientUuid: {
+                      in: userUuid,
+                    },
+                  },
+                  orderBy: {
+                    createdAt: "desc",
+                  },
+                });
+
+                if (messages[0] === null) {
+                  user.lastMessage = "";
+
+                  pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(user));
+                  return user;
+                }
+
+                user.lastMessage = messages[0].text;
+
+                pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(user));
+                return user;
+              }
+            } else {
+              return [];
+            }
+            // Console.log(users);
+          }
+        );
+
+        await Promise.all(node); // Beklemek için Promise.all kullanılır.
+
+        await pipeline.expire(userMessageBoxCacheKey, 300);
+        await pipeline.exec();
+
+        return {
+          node: node,
+          error: "No error",
+        };
+      } else {
+        const node = userMessageBox.map((messageBox) => {
+          return JSON.parse(messageBox);
+        });
+        return {
+          node,
+          error: "No error",
+        };
+      }
+    },
     getLoggedInUserDetails: async (
       _: unknown,
       __: unknown,
@@ -911,6 +1294,51 @@ const resolvers = {
         };
       }
     },
+    async messages(
+      _: unknown,
+      {
+        recipientUserUuid,
+        limit,
+        offset,
+      }: { recipientUserUuid: string; limit: number; offset: number },
+      { prisma, getLoggedInUserDetails }: Context
+    ) {
+      try {
+        if (!getLoggedInUserDetails) {
+          throw new Error("Unauthenticated");
+        }
+
+        const user = await prisma.user.findUnique({
+          where: {
+            uuid: recipientUserUuid,
+          },
+        });
+        if (!user) {
+          throw new Error("User not found");
+        }
+
+        const userUuid = [user.uuid, getLoggedInUserDetails.uuid];
+
+        return await prisma.message.findMany({
+          where: {
+            senderUuid: {
+              in: userUuid,
+            },
+            recipientUuid: {
+              in: userUuid,
+            },
+          },
+          take: limit,
+          skip: offset,
+          orderBy: {
+            createdAt: "desc",
+          },
+          // İnclude: [{model: Reaction, as: 'reactions'}],
+        });
+      } catch (error: any) {
+        throw new Error(error);
+      }
+    },
     getMessageForGroup: async (
       _: unknown,
       {
@@ -964,6 +1392,43 @@ const resolvers = {
           message: `${error}`,
           messages: [],
         };
+      }
+    },
+    searchUser: async (
+      _: unknown,
+      { username }: { username: string },
+      { prisma }: Context
+    ) => {
+      try {
+        // İf only full_name
+
+        // İf only Username
+        if (username) {
+          // İf Username is null
+          if (username.trim() === "") {
+            return "";
+          }
+
+          // İf Username is not null
+          const user: IUser[] = await prisma.user.findMany({
+            where: {
+              // Op.like mysql Like komutu demek
+              // Username den gelen veri ile user db de arama yapıyor
+              // e ile ilgili veri girdiyse db de Username'in içinde  e olan olan tüm kullanıcıları getiriyor
+              username: {
+                contains: username,
+                mode: "insensitive",
+              },
+            },
+            take: 4,
+          });
+
+          return user.map(async (SearchedUser) => SearchedUser);
+        }
+
+        return true;
+      } catch (error: any) {
+        throw new Error(error);
       }
     },
     searchGroupChat: async (
@@ -1069,6 +1534,29 @@ const resolvers = {
   Subscription: {
     // BURADA CLIENT KISMINDA ON CONNECTED YAP
     // BURADAKİ SUBS QUERY SİL
+    messageSent: {
+      subscribe: withFilter(
+        () => pubsub.asyncIterator("newMessage"),
+        ({ newMessage }, args) => {
+          console.log(newMessage);
+          return (
+            newMessage.senderUuid === args.userUuid ||
+            newMessage.recipientUuid === args.userUuid
+          );
+        }
+      ),
+    },
+    newMessage: {
+      subscribe: withFilter(
+        () => pubsub.asyncIterator("newMessage"),
+        ({ newMessage }, args) => {
+          return (
+            newMessage.senderUuid === args.userUuid ||
+            newMessage.recipientUuid === args.userUuid
+          );
+        }
+      ),
+    },
     userStatus: {
       subscribe: withFilter(
         () => pubsub.asyncIterator("USER_LOGIN"),

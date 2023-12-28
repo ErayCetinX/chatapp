@@ -8,14 +8,13 @@ import { loginUser } from './src/redux/userSlice';
 import { ActivityIndicator, Text, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLoggedInUserDetailsQuery } from './src/request/query';
-// import WhoollyIcon from './src/assets/ic_launcher.png';
+// import Icons from './src/assets/ic_launcher.png';
 // import messaging from '@react-native-firebase/messaging';
 // import firebase from '@react-native-firebase/app';
 // import PushNotification, { Importance } from 'react-native-push-notification';
 
 const App = () => {
-  const { data, loading } = useQuery(getLoggedInUserDetailsQuery);
-  console.log(data);
+  const { data, loading,refetch } = useQuery(getLoggedInUserDetailsQuery);
   const dispatch = useDispatch();
   useEffect(() => {
     const Appcheck = async () => {
@@ -103,7 +102,7 @@ const App = () => {
     );
   }
 
-  return <Index />;
+  return <Index refetch={refetch} />;
 };
 
 export default App;

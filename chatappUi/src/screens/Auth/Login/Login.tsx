@@ -2,22 +2,20 @@ import React, { useCallback, useState } from 'react';
 import { View, Text, TextInput } from 'react-native';
 import style from './LoginStyle';
 import { Button, Icons } from '../../../components/ui';
-import { useMutation, useQuery } from '@apollo/client';
+import { useMutation } from '@apollo/client';
 import { signInUserMutation } from '../../../request/mutation';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { getLoggedInUserDetailsQuery } from '../../../request/query';
 
-const Login = () => {
+const Login:React.FC<{refetch:() => void}> = ({ refetch }) => {
   const navigation = useNavigation();
   const [signIn, { loading, error }] = useMutation(signInUserMutation);
-  const { refetch } = useQuery(getLoggedInUserDetailsQuery);
-  const [email, setEmail] = useState<string>();
-  const [password, setPassword] = useState<string>();
+  const [username, setUsername] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
 
-  const changeState = useCallback((e: string, type: 'Email' | 'Password') => {
-    if (type === 'Email') {
-      setEmail(e);
+  const changeState = useCallback((e: string, type: 'Username' | 'Password') => {
+    if (type === 'Username') {
+      setUsername(e);
     }
     if (type === 'Password') {
       setPassword(e);
@@ -43,9 +41,8 @@ const Login = () => {
 
   const loginPress = () => {
     signIn({
-      variables: { email, password, DeviceToken: 'sad' },
+      variables: { username, password, DeviceToken: 'sad' },
     }).then(async ({ data }) => {
-      console.log(data);
       const existTheme = await AsyncStorage.getItem('Theme');
       if (existTheme === null || existTheme === undefined) {
         await AsyncStorage.setItem('Theme', 'Light');
@@ -80,15 +77,15 @@ const Login = () => {
         )}
         <View style={style.content}>
           <View style={style.inputBox}>
-            <Icons name="mail" type="feather" size={25} color="#808080" />
+            <Icons name="user" type="feather" size={25} color="#808080" />
             <TextInput
               style={style.input}
               autoCapitalize="none"
-              autoComplete="email"
-              keyboardType="email-address"
-              value={email}
-              onChangeText={e => changeState(e, 'Email')}
-              placeholder="Email"
+              autoComplete="username"
+              keyboardType="default"
+              value={username}
+              onChangeText={e => changeState(e, 'Username')}
+              placeholder="Username"
               placeholderTextColor={'#808080'}
               multiline={false}
               maxLength={70}

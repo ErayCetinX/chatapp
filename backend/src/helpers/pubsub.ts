@@ -14,6 +14,6 @@ const options = {
 const pubsub = new RedisPubSub({
   publisher: new Redis(options),
   subscriber: new Redis(options),
-})
+});
 
 export default pubsub;

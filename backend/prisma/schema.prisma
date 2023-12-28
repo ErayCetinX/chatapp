@@ -48,6 +48,13 @@ model Message {
   recipientUser User @relation(name: "recipientUserUuid", fields: [recipientUuid], references: [uuid])
 }
 
+model MessageBox {
+  uuid      String   @id @unique @default(uuid()) @db.VarChar(64)
+  request   String   @db.VarChar(64)
+  accepting String   @db.VarChar(64)
+  createdAt DateTime @default(now())
+}
+
 model GroupChat {
   uuid           String @id @unique @db.VarChar(64)
   groupName      String

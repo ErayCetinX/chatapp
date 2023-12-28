@@ -5,12 +5,24 @@ interface ButtonProps {
   style?: StyleProp<ViewStyle>;
   disabled?: boolean;
   onPress?: Function | void;
+  onLongPress?: Function | void;
   children?: JSX.Element | JSX.Element[];
   activeOpacity?: number;
 }
 
 const Button: React.FC<ButtonProps> = props => {
-  const { style, onPress, children, disabled, activeOpacity } = props;
+  const { style, onPress, onLongPress, children, disabled, activeOpacity } = props;
+
+  const onButtonLongPress = useCallback(() => {
+    if (disabled) {
+      return;
+    }
+
+    if (typeof onLongPress !== 'function') {
+      return;
+    }
+    onLongPress();
+  }, [disabled, onLongPress]);
 
   const onButtonPress = useCallback(() => {
     if (disabled) {
@@ -26,6 +38,7 @@ const Button: React.FC<ButtonProps> = props => {
   return (
     <TouchableOpacity
       onPress={onButtonPress}
+      onLongPress={onButtonLongPress}
       activeOpacity={activeOpacity ? activeOpacity : 0.8}
       disabled={disabled}
       style={style}>

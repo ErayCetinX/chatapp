@@ -7,14 +7,14 @@ import { registerUserMutation } from '../../../request/mutation';
 import { useNavigation } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const Register = () => {
+const Register: React.FC<{ refetch: () => void }> = ({ refetch }) => {
   const navigation = useNavigation();
   const [registerUser, { loading, error }] = useMutation(registerUserMutation);
 
-  const [username, setUserName] = useState<string>();
-  const [email, setEmail] = useState<string>();
-  const [password, setPassword] = useState<string>();
-  const [repeatPassword, setRepeatPassword] = useState<string>();
+  const [username, setUserName] = useState<string>('');
+  const [email, setEmail] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [repeatPassword, setRepeatPassword] = useState<string>('');
 
   const changeState = useCallback(
     (e: string, type: 'Email' | 'Password' | 'repeatPassword' | 'username') => {
@@ -61,11 +61,24 @@ const Register = () => {
         DeviceToken: 'sad',
       },
     }).then(async ({ data }) => {
-      console.log(data);
       await AsyncStorage.setItem('token', data.registerUser.token.token);
       await AsyncStorage.setItem('Theme', 'Light');
+      await refetch();
     });
   };
+
+  const isDisabled: boolean =
+    loading === true ||
+    username?.trim() === '' ||
+    email?.trim() === '' ||
+    password?.trim() === '' ||
+    repeatPassword?.trim() === '' ||
+    password?.length < 6 ||
+    username?.length === 0 ||
+    password?.length === 0 ||
+    email?.length === 0 ||
+    repeatPassword?.length === 0 ||
+    password !== repeatPassword;
 
   return (
     <View style={style.container}>
@@ -146,8 +159,11 @@ const Register = () => {
               multiline={false}
             />
           </View>
-          <Button style={style.button} onPress={loginPress}>
-            <Text style={style.buttonText}>Login</Text>
+          <Button
+            style={style.button}
+            onPress={loginPress}
+            disabled={isDisabled}>
+            <Text style={style.buttonText}>Register</Text>
           </Button>
         </View>
         <View style={style.info}>

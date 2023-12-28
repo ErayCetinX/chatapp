@@ -6,11 +6,10 @@ import { useSelector } from 'react-redux';
 import { State, getLoggedInUserDetailsType } from '../types';
 import Main from './main';
 
-const Index = () => {
+const Index:React.FC<{refetch}> = ({ refetch }) => {
   const getLoggedInUserDetails = useSelector<State, getLoggedInUserDetailsType>(
     state => state.getLoggedInUserDetails,
   );
-  console.log(getLoggedInUserDetails);
   const logined = !!getLoggedInUserDetails;
 
   const Stack = createStackNavigator();
@@ -21,7 +20,9 @@ const Index = () => {
         header: () => null,
       }}
       initialRouteName={logined ? 'Home' : 'Auth'}>
-      {!logined && <Stack.Screen name="Auth" component={Auth} />}
+      {!logined && <Stack.Screen name="Auth">
+        {() => <Auth refetch={refetch} />}
+        </Stack.Screen>}
       {logined && (
         <React.Fragment>
           <Stack.Screen name="Home">

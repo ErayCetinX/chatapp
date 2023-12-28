@@ -28,7 +28,7 @@ const typeDefs = `#graphql
         isReply: Boolean
         createdAt: Date
 
-        # reactions: [Reaction]
+        #   reactions: [Reaction]
         senderUser: User!
         recipientUser: User!
     }
@@ -43,6 +43,12 @@ const typeDefs = `#graphql
 
         Members: [User]! # grupa üye olanlar
         Message: [Message]!
+    }
+
+    type MessageInbox {
+        uuid: ID!
+        request: ID!
+        accepting: ID!
     }
 
     type Inbox {
@@ -107,6 +113,12 @@ const typeDefs = `#graphql
         message: String!
     }
 
+    type RetrunMessageBoxSatatus {
+        node: [Message]
+        status: Boolean!
+        error: String!
+    }
+
     type Query {
         getLoggedInUserDetails: GetLoggedInUserDetails!
         getUserDetailsByUuid(userUuid: ID!): UserDetailsType!
@@ -114,7 +126,9 @@ const typeDefs = `#graphql
         getMessageForGroup(groupChatUuid: ID!, limit: Int, offset: Int): QueryMessage!
         searchGroupChat(groupChatName: String!): GroupChatEdge!
         searchGroupMessage(groupChatUuid: ID! searchMessage: String!): SearchGroupMessageEdge!
+        searchUser(username: String): [User]!
         userInbox: Inbox!
+        messages(recipientUserUuid: ID!, limit: Int, offset: Int): [Message]
     }
 
     type Mutation {
@@ -123,7 +137,8 @@ const typeDefs = `#graphql
         signIn(sigInUser: signinUserInput!): UserMutationReturn!
 
         #Message Event
-        createMessage(newMessage: newMessageInput!): MessageMutationReturn!
+        createMessage(newMessage: newMessageInput!): Message!
+        ReplyMessage(replyMessage: ReplyMessageInput!): Message!
         deleteMessage(messageUuid: ID!): MessageMutationReturn!
         # Cache bağlı durum
         updateMessage(messageUuid: ID!): MessageMutationReturn!
@@ -134,10 +149,14 @@ const typeDefs = `#graphql
         joinGroupChat(groupChatUuid: ID!): GroupMutationReturn!
         leaveGroupChat(groupChatUuid: ID!): GroupMutationReturn!
         inviteGroupChat(userName: String! GroupChatUuid: ID!): GroupMutationReturn!
+
+        CreateInbox(UserUuid: ID!): RetrunMessageBoxSatatus!
+        DeleteInbox(InboxUuid: ID!): RetrunMessageBoxSatatus!
     }
 
     type Subscription {
         messageSent(userUuid: ID!): Message!
+        newMessage(userUuid: ID!): Message!
         deleteMessage(userUuid: ID!): Message!
         userStatus: Boolean!
     }
@@ -150,8 +169,18 @@ const typeDefs = `#graphql
         DeviceToken: String!
     }
 
+    input ReplyMessageInput {
+        recipientUserUuid: ID!
+        MessageUuid: ID!
+        text: String
+        pictureUrl: String
+        replyMessage: String
+        replyMessagePicture: String
+        replyMessageUser: ID
+    }
+
     input signinUserInput {
-        email: String!
+        username: String!
         password: String!
         DeviceToken: String!
     }

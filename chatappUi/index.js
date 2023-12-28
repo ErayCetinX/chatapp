@@ -13,10 +13,7 @@ import {
   HttpLink,
 } from '@apollo/client';
 import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
-import {
-  getMainDefinition,
-  offsetLimitPagination,
-} from '@apollo/client/utilities';
+import { getMainDefinition } from '@apollo/client/utilities';
 import fetch from 'cross-fetch';
 import { setContext } from '@apollo/client/link/context';
 import { createClient } from 'graphql-ws';
@@ -27,7 +24,7 @@ import store from './src/redux/store';
 // import PushNotification from 'react-native-push-notification';
 // import messaging from '@react-native-firebase/messaging';
 
-__DEV__ === false;
+// __DEV__ === false;
 
 LogBox.ignoreLogs([
   'ViewPropTypes will be removed',
@@ -82,7 +79,7 @@ const Index = () => {
     //Check current ip
     // Terminal => ipconfig
     // !! Don't use localhost
-    uri: 'http://192.168.1.108:4000/api/v1/graphql',
+    uri: 'http://192.168.1.103:4000/api/v1/graphql',
     // uri: 'https://api.whoollyapp.com/graphql',
     fetch,
     credentials: 'include',
@@ -101,7 +98,7 @@ const Index = () => {
 
   const wsLink = new GraphQLWsLink(
     createClient({
-      url: 'ws://192.168.1.108:4000/api/v1/graphql',
+      url: 'ws://192.168.1.103:4000/api/v1/graphql',
       // url: 'wss://api.whoollyapp.com/graphql',
     }),
   );

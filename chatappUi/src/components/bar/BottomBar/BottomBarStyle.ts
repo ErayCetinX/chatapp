@@ -2,13 +2,14 @@ import { StyleSheet } from 'react-native';
 
 const style = StyleSheet.create({
   container: {
-    position: 'absolute',
-    bottom: 25,
-    left: 20,
-    right: 20,
-    elevation: 0,
-    borderRadius: 15,
-    backgroundColor: 'red',
+    shadowOffset: {
+      width: 0,
+      height: 24,
+    },
+    shadowOpacity: 0.58,
+    shadowRadius: 16.0,
+    elevation: 14,
+    backgroundColor: '#FBFCFF',
     height: 60,
   },
   Box: {
