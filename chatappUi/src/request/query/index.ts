@@ -16,13 +16,13 @@ export const getLoggedInUserDetailsQuery = gql`
 `;
 
 export const SearchQuery = gql`
- query($username: String) {
-  searchUser(username: $username) {
-    username
-    avatarUrl
-    uuid
+  query ($username: String) {
+    searchUser(username: $username) {
+      username
+      avatarUrl
+      uuid
+    }
   }
-}
 `;
 
 export const SerchMessageUserQuery = gql`
@@ -52,19 +52,19 @@ export const SerchMessageUserQuery = gql`
 `;
 
 export const UserInboxQuery = gql`
-query UserInboxQuery {
-  userInbox {
-    error
-    node {
-      
-      uuid
+  query UserInboxQuery {
+    userInbox {
+      error
+      node {
+        uuid
         username
         avatarUrl
         lastMessage
         InboxUuid
+        createdAt
+      }
     }
   }
-}
 `;
 
 export const MessageQuery = gql`

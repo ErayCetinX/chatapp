@@ -15,6 +15,7 @@ const typeDefs = `#graphql
         isAdmin: Boolean! #sadece topluluklarda olacak
         isInvited: Boolean!
         isOnline: Boolean!
+        createdAt: Date
     }
 
     type Message {
@@ -30,7 +31,7 @@ const typeDefs = `#graphql
         isReply: Boolean
         createdAt: Date
 
-        # reactions: [Reaction]
+        #   reactions: [Reaction]
         senderUser: User!
         recipientUser: User!
     }
@@ -45,6 +46,12 @@ const typeDefs = `#graphql
 
         Members: [User]! # grupa üye olanlar
         Message: [Message]!
+    }
+
+    type MessageInbox {
+        uuid: ID!
+        request: ID!
+        accepting: ID!
     }
 
     type Inbox {
@@ -63,7 +70,7 @@ const typeDefs = `#graphql
     }
 
     type GroupChatEdge {
-        Group: [GroupChat!]!
+        group: [GroupChat!]!
         code: String!
         message: String!
     }
@@ -103,24 +110,40 @@ const typeDefs = `#graphql
         message: String!
     }
 
+    type UserDetailsType {
+        user: User!
+        code: String!
+        message: String!
+    }
+
+    type RetrunMessageBoxSatatus {
+        node: [Message]
+        status: Boolean!
+        error: String!
+    }
+
     type Query {
-        userInbox: Inbox!
-        getMessageForGroup(groupChatUuid: ID!, limit: Int, offset: Int): QueryMessage!
         getLoggedInUserDetails: GetLoggedInUserDetails!
-        getUserDetailsByUuid(userUuid: ID!): User!
-        getLoggedInUserGroups: [GroupChat!]!
+        getUserDetailsByUuid(userUuid: ID!): UserDetailsType!
+        getLoggedInUserGroups(limit: Int offset: Int): GroupChatEdge!
+        getMessageForGroup(groupChatUuid: ID!, limit: Int, offset: Int): QueryMessage!
         searchGroupChat(groupChatName: String!): GroupChatEdge!
         searchGroupMessage(groupChatUuid: ID! searchMessage: String!): SearchGroupMessageEdge!
+        searchUser(username: String): [User]!
+        userInbox: Inbox!
+        messages(recipientUserUuid: ID!, limit: Int, offset: Int): [Message]
     }
 
     type Mutation {
         #User Event
-        registerUser(newUser: createUserInput): UserMutationReturn!
+        registerUser(newUser: createUserInput!): UserMutationReturn!
         signIn(sigInUser: signinUserInput!): UserMutationReturn!
 
         #Message Event
-        createMessage(newMessage: newMessageInput!): MessageMutationReturn!
+        createMessage(newMessage: newMessageInput!): Message!
+        ReplyMessage(replyMessage: ReplyMessageInput!): Message!
         deleteMessage(messageUuid: ID!): MessageMutationReturn!
+        # Cache bağlı durum
         updateMessage(messageUuid: ID!): MessageMutationReturn!
 
         # GroupChat
@@ -129,10 +152,14 @@ const typeDefs = `#graphql
         joinGroupChat(groupChatUuid: ID!): GroupMutationReturn!
         leaveGroupChat(groupChatUuid: ID!): GroupMutationReturn!
         inviteGroupChat(userName: String! GroupChatUuid: ID!): GroupMutationReturn!
+
+        CreateInbox(UserUuid: ID!): RetrunMessageBoxSatatus!
+        DeleteInbox(InboxUuid: ID!): RetrunMessageBoxSatatus!
     }
 
     type Subscription {
         messageSent(userUuid: ID!): Message!
+        newMessage(userUuid: ID!): Message!
         deleteMessage(userUuid: ID!): Message!
         userStatus: Boolean!
     }
@@ -143,6 +170,16 @@ const typeDefs = `#graphql
         confirmPassword: String!
         email: String!
         DeviceToken: String!
+    }
+
+    input ReplyMessageInput {
+        recipientUserUuid: ID!
+        MessageUuid: ID!
+        text: String
+        pictureUrl: String
+        replyMessage: String
+        replyMessagePicture: String
+        replyMessageUser: ID
     }
 
     input signinUserInput {

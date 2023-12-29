@@ -1,5 +1,4 @@
 import Redis from "ioredis";
-import { REDISCLOUD_URL } from "./constant";
 
 const redis =
   process.env.NODE_ENV === "production"

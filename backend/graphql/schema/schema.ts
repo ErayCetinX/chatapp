@@ -13,6 +13,7 @@ const typeDefs = `#graphql
         isAdmin: Boolean! #sadece topluluklarda olacak
         isInvited: Boolean!
         isOnline: Boolean!
+        createdAt: Date
     }
 
     type Message {

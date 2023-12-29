@@ -5,13 +5,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.redis = void 0;
 const ioredis_1 = __importDefault(require("ioredis"));
-const constant_1 = require("./constant");
-const redis = process.env.NODE_ENV === 'production'
+const redis = process.env.NODE_ENV === "production"
     ? new ioredis_1.default({
-        host: constant_1.REDISCLOUD_URL
+        port: 6379,
+        host: "localhost",
     })
     : new ioredis_1.default({
-        host: constant_1.REDISCLOUD_URL
+        port: 6379,
+        host: "localhost",
     });
 exports.redis = redis;
 //# sourceMappingURL=redis.js.map

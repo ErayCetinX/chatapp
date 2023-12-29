@@ -17,7 +17,7 @@ interface Props {
 }
 
 const UserItem: React.FC<Props> = props => {
-  const { avatarUrl, username, lastMessage, uuid, InboxUuid } = props;
+  const { avatarUrl, username, lastMessage, uuid, InboxUuid,createdAt } = props;
   const [longPress, setlongPress] = useState<boolean | Element>(false);
   const navigation = useNavigation();
 
@@ -29,6 +29,7 @@ const UserItem: React.FC<Props> = props => {
       UserName: username,
       UserAvatar: avatarUrl,
       recipientUserUuid: uuid,
+      createdAt,
     });
     setlongPress(false);
   };

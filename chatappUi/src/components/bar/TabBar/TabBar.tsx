@@ -36,7 +36,11 @@ const Tabbar = () => {
       <View style={style.box}>
         <View style={style.userInfo}>
           <Button
-            onPress={() => navigation.navigate('Profile')}
+            onPress={() => navigation.navigate('Profile',{
+              username: activeUser.username,
+              email: activeUser.email,
+              avatarUrl: activeUser.avatarUrl,
+            })}
             style={style.userImage}>
             <FastImage
               source={{

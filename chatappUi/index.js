@@ -79,7 +79,7 @@ const Index = () => {
     //Check current ip
     // Terminal => ipconfig
     // !! Don't use localhost
-    uri: 'http://192.168.1.103:4000/api/v1/graphql',
+    uri: 'http://192.168.224.56:4000/api/v1/graphql',
     // uri: 'https://api.whoollyapp.com/graphql',
     fetch,
     credentials: 'include',
@@ -98,7 +98,7 @@ const Index = () => {
 
   const wsLink = new GraphQLWsLink(
     createClient({
-      url: 'ws://192.168.1.103:4000/api/v1/graphql',
+      url: 'ws://192.168.224.56:4000/api/v1/graphql',
       // url: 'wss://api.whoollyapp.com/graphql',
     }),
   );

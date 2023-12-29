@@ -8,8 +8,250 @@ const token_1 = __importDefault(require("../../src/helpers/token"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const uuid_1 = require("uuid");
 const graphql_subscriptions_1 = require("graphql-subscriptions");
+const redis_1 = require("../../redis");
 const resolvers = {
     Mutation: {
+        async ReplyMessage(_, { replyMessage: { MessageUuid, recipientUserUuid, pictureUrl, text }, }, { getLoggedInUserDetails, prisma }) {
+            // İf no getLoggedInUserDetails
+            if (!getLoggedInUserDetails) {
+                throw new Error("Oturum Açınız");
+            }
+            const messages = await prisma.message.findUnique({
+                where: {
+                    uuid: MessageUuid,
+                },
+            });
+            // We define recipient
+            const recipient = await prisma.user.findUnique({
+                where: { uuid: recipientUserUuid },
+            });
+            // İf no recipient
+            if (!recipient) {
+                throw new Error("User not found");
+            }
+            else if (recipient.uuid === getLoggedInUserDetails.uuid) {
+                throw new Error("Kendine mesaj gönderemezsiniz!");
+            }
+            if (!messages) {
+                throw new Error("Message not found");
+            }
+            // Eğer yanıtlanan resim ise
+            if (pictureUrl) {
+                const message = await prisma.message.create({
+                    data: {
+                        uuid: (0, uuid_1.v4)(),
+                        senderUuid: getLoggedInUserDetails.uuid,
+                        recipientUuid: recipientUserUuid,
+                        text,
+                        pictureUrl,
+                        replyMessagePictureUrl: messages && messages.pictureUrl ? messages.pictureUrl : "",
+                        replyMessage: messages && messages.text ? messages.text : "",
+                        replyMessageUserUuid: messages && messages.senderUuid ? messages.senderUuid : "",
+                        isPicture: true,
+                        isReply: true,
+                    },
+                });
+                if (message) {
+                    const UserNoti = await prisma.notifications.create({
+                        data: {
+                            uuid: (0, uuid_1.v4)(),
+                            content: `${getLoggedInUserDetails.username} sent you a message.`,
+                            senderUuid: getLoggedInUserDetails.uuid,
+                            recevierUuid: recipientUserUuid, // Alıcı
+                        },
+                    });
+                    pubsub_1.default.publish("New Notifications", {
+                        Notifications: UserNoti,
+                    });
+                    // await User.update(
+                    //   { user_notifications: Sequelize.literal('user_notifications + 1'), },
+                    //   { where: { uuid: recipientUserUuid, }, }
+                    // );
+                }
+                pubsub_1.default.publish("newMessage", {
+                    newMessage: message,
+                    getLoggedInUserDetails,
+                });
+                return message;
+            }
+            // // if empity text
+            // if (text.trim() === '') {
+            //   throw new UserInputError('mesaj boş olamaz');
+            // }
+            const message = await prisma.message.create({
+                data: {
+                    uuid: (0, uuid_1.v4)(),
+                    senderUuid: getLoggedInUserDetails.uuid,
+                    recipientUuid: recipientUserUuid,
+                    text,
+                    pictureUrl: "",
+                    replyMessagePictureUrl: messages && messages.pictureUrl ? messages.pictureUrl : "",
+                    replyMessage: messages && messages.text ? messages.text : "",
+                    replyMessageUserUuid: messages && messages.senderUuid ? messages.senderUuid : "",
+                    isPicture: false,
+                    isReply: true,
+                },
+            });
+            if (message) {
+                const UserNoti = await prisma.notifications.create({
+                    data: {
+                        uuid: (0, uuid_1.v4)(),
+                        content: `${getLoggedInUserDetails.username} sent you a message.`,
+                        senderUuid: getLoggedInUserDetails.uuid,
+                        recevierUuid: recipientUserUuid, // Alıcı
+                    },
+                });
+                pubsub_1.default.publish("New Notifications", {
+                    Notifications: UserNoti,
+                });
+                // await User.update(
+                //   { user_notifications: Sequelize.literal('user_notifications + 1'), },
+                //   { where: { uuid: recipientUserUuid, }, }
+                // );
+            }
+            pubsub_1.default.publish("newMessage", {
+                newMessage: message,
+                getLoggedInUserDetails,
+            });
+            return message;
+        },
+        async CreateInbox(_, { UserUuid }, { getLoggedInUserDetails, prisma }) {
+            try {
+                const users = await prisma.user.findUnique({
+                    where: {
+                        uuid: UserUuid,
+                    },
+                });
+                if (!users) {
+                    return {
+                        node: [],
+                        status: false,
+                        error: "User not found",
+                    };
+                }
+                if (getLoggedInUserDetails.uuid === UserUuid) {
+                    return {
+                        status: false,
+                        error: "You cannot open a message box with yourself",
+                    };
+                }
+                const userUuid = [getLoggedInUserDetails.uuid, users.uuid];
+                const userMessageBoxCacheKey = `messageBox: ${getLoggedInUserDetails.uuid}`;
+                const pipeline = await redis_1.redis.pipeline();
+                const existBefore = await prisma.messageBox.findMany({
+                    where: {
+                        request: { in: userUuid },
+                        accepting: { in: userUuid },
+                    },
+                });
+                // Eğer böyle bir Inbox varsa mesajları göster
+                if (existBefore.length > 0) {
+                    // Burada mesajları aldık
+                    const messages = await prisma.message.findMany({
+                        where: {
+                            senderUuid: { in: userUuid },
+                            recipientUuid: { in: userUuid },
+                        },
+                        orderBy: { createdAt: "desc" },
+                    });
+                    // Return ile verdik
+                    return {
+                        node: messages,
+                        status: true,
+                        error: "No Error, showing messages",
+                    };
+                }
+                // Eğer böyle bir Inbox yoksa
+                // yani existBefore === false
+                const messageBox = await prisma.messageBox.create({
+                    data: {
+                        uuid: (0, uuid_1.v4)(),
+                        request: getLoggedInUserDetails.uuid,
+                        accepting: UserUuid,
+                    },
+                });
+                users.InboxUuid = messageBox.uuid;
+                // Cache'e veri eklemek için kullanılan komutlar
+                pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(users));
+                pipeline.expire(userMessageBoxCacheKey, 300); // 5 dakika süreyle cache'te tutulacak
+                pipeline.exec();
+                // Daha önce veri olmadığı için boş array vereceğiz
+                return {
+                    node: [],
+                    status: true,
+                    error: "",
+                };
+            }
+            catch (error) {
+                return {
+                    status: false,
+                    error: `${error}`,
+                };
+            }
+        },
+        async DeleteInbox(_, { InboxUuid }, { prisma, getLoggedInUserDetails }) {
+            try {
+                const existBefore = await prisma.messageBox.findUnique({
+                    where: {
+                        uuid: InboxUuid,
+                    },
+                });
+                // Not found inbox
+                if (!existBefore) {
+                    return {
+                        status: false,
+                        error: "Inbox not found.",
+                    };
+                }
+                // Eğerki inbox varsa mesajlar silenecek ve inbox silinecek
+                const user = [existBefore.request, existBefore.accepting];
+                // Mesajları silmeye gerek yok tekrar açılırsa mesajlar gözüksün
+                // await Message.destroy({
+                //   where: {
+                //     from: { [Op.in]: user },
+                //     to: { [Op.in]: user },
+                //   },
+                //   truncate: true,
+                // });
+                const userMessageBoxCacheKey = `messageBox: ${getLoggedInUserDetails.uuid}`;
+                // await redis.del(userMessageBoxCacheKey);
+                const userMessageBox = await redis_1.redis.lrange(userMessageBoxCacheKey, 0, -1);
+                const allMessage = userMessageBox.map((d) => JSON.parse(d));
+                if (allMessage.length > 0) {
+                    const multi = redis_1.redis.multi(); // multi komutunu burada çalıştırıyoruz
+                    allMessage.forEach(async (user) => {
+                        await multi.lrem(userMessageBoxCacheKey, 0, JSON.stringify(user));
+                        await prisma.messageBox.delete({
+                            where: {
+                                uuid: InboxUuid,
+                            },
+                        });
+                    });
+                    await multi.exec();
+                    return {
+                        status: true,
+                        error: "",
+                    };
+                }
+                console.log(InboxUuid);
+                // destroy Inbox
+                await prisma.messageBox.delete({
+                    where: {
+                        uuid: InboxUuid,
+                    },
+                });
+                return {
+                    status: true,
+                    error: "",
+                };
+            }
+            catch (error) {
+                return {
+                    status: false,
+                    error,
+                };
+            }
+        },
         registerUser: async (_, { newUser: { username, password, email, confirmPassword, DeviceToken } }, { prisma }) => {
             // Username check
             const accountname = await prisma.user.findUnique({
@@ -69,13 +311,13 @@ const resolvers = {
                     token: token_1.default.generate(newUser, "1y"),
                 },
                 code: "200",
-                message: "User creted"
+                message: "User creted",
             };
         },
         signIn: async (_, { sigInUser: { username, password, DeviceToken }, }, { prisma }) => {
             // Fristname is null
             if (username.trim() === "") {
-                throw new Error("Your name cannot be blank");
+                throw new Error("Your username cannot be blank");
             }
             // Password is null
             if (password.trim() === "") {
@@ -89,7 +331,7 @@ const resolvers = {
             });
             // İf there is no username
             if (!user) {
-                throw new Error("There is no user with the name you entered!");
+                throw new Error("There is no user with the username you entered!");
             }
             // Compare password
             const validPassword = await bcrypt_1.default.compare(password, user.password);
@@ -108,18 +350,18 @@ const resolvers = {
                         uuid: user.uuid,
                     },
                 });
-                pubsub_1.default.publish('USER_LOGIN', user);
+                pubsub_1.default.publish("USER_LOGIN", user);
                 user.isOnline = true;
                 return {
                     token: {
                         token: token_1.default.generate(user, "1y"),
                     },
                     code: "200",
-                    message: "User creted"
+                    message: "User creted",
                 };
             }
         },
-        createMessage: async (_, { newMessage: { recipientUserUuid, text, pictureUrl }, }, { prisma, getLoggedInUserDetails }) => {
+        async createMessage(_, { newMessage: { recipientUserUuid, text, pictureUrl }, }, { prisma, getLoggedInUserDetails }) {
             try {
                 // İf no getLoggedInUserDetails
                 if (!getLoggedInUserDetails) {
@@ -141,49 +383,6 @@ const resolvers = {
                 else if (recipient.uuid === getLoggedInUserDetails.uuid) {
                     throw new Error("Kendine mesaj gönderemezsiniz!");
                 }
-                if (pictureUrl) {
-                    const message = await prisma.message.create({
-                        data: {
-                            uuid: (0, uuid_1.v4)(),
-                            senderUuid: getLoggedInUserDetails.uuid,
-                            recipientUuid: recipientUserUuid,
-                            text,
-                            pictureUrl,
-                            isPicture: true,
-                            isReply: false,
-                        },
-                    });
-                    if (message) {
-                        const UserNoti = await prisma.notifications.create({
-                            data: {
-                                uuid: (0, uuid_1.v4)(),
-                                content: `${getLoggedInUserDetails.username} sent you a message.`,
-                                senderUuid: getLoggedInUserDetails.uuid,
-                                recevierUuid: recipientUserUuid, // Alıcı
-                            },
-                        });
-                        // if (
-                        //   recipient.deviceToken !== null &&
-                        //   recipient.deviceToken.length > 0
-                        // ) {
-                        //   admin.messaging().send({
-                        //     notification: {
-                        //       title: "Whoolly",
-                        //       body: `${getLoggedInUserDetails.username} sent you a picture.`,
-                        //     },
-                        //     token: recipient.deviceToken,
-                        //   });
-                        // }
-                        pubsub_1.default.publish("New Notifications", {
-                            Notifications: UserNoti,
-                        });
-                    }
-                    pubsub_1.default.publish("newMessage", {
-                        newMessage: message,
-                        getLoggedInUserDetails,
-                    });
-                    return message;
-                }
                 // İf empity text
                 if (text.trim() === "") {
                     throw new Error("mesaj boş olamaz");
@@ -199,31 +398,6 @@ const resolvers = {
                         isReply: false,
                     },
                 });
-                if (message) {
-                    const UserNoti = await prisma.notifications.create({
-                        data: {
-                            uuid: (0, uuid_1.v4)(),
-                            content: `${getLoggedInUserDetails.username} sent you a message.`,
-                            senderUuid: getLoggedInUserDetails.uuid,
-                            recevierUuid: recipientUserUuid, // Alıcı
-                        },
-                    });
-                    // if (
-                    //   recipient.deviceToken !== null &&
-                    //   recipient.deviceToken.length > 0
-                    // ) {
-                    //   admin.messaging().send({
-                    //     notification: {
-                    //       title: "Whoolly",
-                    //       body: `${getLoggedInUserDetails.username}: ${text}`,
-                    //     },
-                    //     token: recipient.deviceToken,
-                    //   });
-                    // }
-                    pubsub_1.default.publish("New Notifications", {
-                        Notifications: UserNoti,
-                    });
-                }
                 pubsub_1.default.publish("newMessage", {
                     newMessage: message,
                 });
@@ -233,12 +407,54 @@ const resolvers = {
                 throw new Error(error);
             }
         },
-        createGroupChat: async (_, { newGroup: { groupName, groupAvatar, description, userUuid } }, { prisma, getLoggedInUserDetails }) => {
+        deleteMessage: async (_, { groupChatUuid }, { prisma, getLoggedInUserDetails }) => {
             try {
                 if (!getLoggedInUserDetails) {
                     return {
                         code: "401",
-                        message: 'unauthorized',
+                        message: "unauthorized",
+                        groupChat: [],
+                    };
+                }
+                const isGroupChatDefinedBefore = await prisma.groupChat.findUnique({
+                    where: {
+                        uuid: groupChatUuid,
+                    },
+                });
+                if (!isGroupChatDefinedBefore) {
+                    return {
+                        code: "404",
+                        message: "group not found",
+                        groupChat: [],
+                    };
+                }
+                // !! BURADA TÜM USERLAR SİLİNİYOR MU DİYE CHECK ET
+                // !! YANİ İLİŞKİLENDİRME YOKSA EKLE OLMADI FOR LOOP İLE SİL
+                await prisma.groupChat.delete({
+                    where: {
+                        uuid: groupChatUuid,
+                    },
+                });
+                return {
+                    code: "200",
+                    message: "Deleted",
+                    groupChat: isGroupChatDefinedBefore,
+                };
+            }
+            catch (error) {
+                return {
+                    code: "400",
+                    message: `${error}`,
+                    groupChat: [],
+                };
+            }
+        },
+        createGroupChat: async (_, { newGroup: { groupName, groupAvatar, description, userUuid }, }, { prisma, getLoggedInUserDetails }) => {
+            try {
+                if (!getLoggedInUserDetails) {
+                    return {
+                        code: "401",
+                        message: "unauthorized",
                         groupChat: null,
                     };
                 }
@@ -261,30 +477,31 @@ const resolvers = {
                         groupChat: null,
                     };
                 }
-                const groupChat = await prisma.groupChat.create({
+                const groupChat = await prisma.groupChat
+                    .create({
                     data: {
                         uuid: (0, uuid_1.v4)(),
-                        groupAvatarUrl: groupAvatar.length > 0 ? groupAvatar : "https://res.cloudinary.com/mowight/image/upload/v1620650903/download_y1llvc.png",
+                        groupAvatarUrl: groupAvatar.length > 0
+                            ? groupAvatar
+                            : "https://res.cloudinary.com/mowight/image/upload/v1620650903/download_y1llvc.png",
                         groupName,
                         description,
-                        ownerUser: {
-                            connect: { uuid: getLoggedInUserDetails.uuid },
-                        },
-                    }
-                }).then((groupData) => {
+                        ownerUserUuid: getLoggedInUserDetails.uuid,
+                    },
+                })
+                    .then((groupData) => {
                     userUuid.map(async (uuid) => {
                         await prisma.groupMember.create({
                             data: {
                                 uuid: (0, uuid_1.v4)(),
                                 member: {
-                                    connect: { uuid }
+                                    connect: { uuid },
                                 },
                                 groupChat: {
-                                    connect: { uuid }
+                                    connect: { uuid },
                                 },
                                 isAdmin: groupData.ownerUserUuid === getLoggedInUserDetails.uuid,
-                                isOwner: groupData.ownerUserUuid === getLoggedInUserDetails.uuid,
-                            }
+                            },
                         });
                         const memberCount = await prisma.groupMember.findMany({
                             where: {
@@ -293,7 +510,7 @@ const resolvers = {
                         });
                         await prisma.groupChat.update({
                             data: {
-                                memberCount: memberCount.length
+                                memberCount: memberCount.length,
                             },
                             where: {
                                 uuid: groupData.uuid,
@@ -302,26 +519,26 @@ const resolvers = {
                     });
                 });
                 return {
-                    code: '200',
-                    message: 'chat created',
+                    code: "200",
+                    message: "chat created",
                     groupChat,
                 };
             }
             catch (error) {
                 return {
-                    code: '400',
+                    code: "400",
                     message: `${error}`,
-                    groupChat: null
+                    groupChat: null,
                 };
             }
         },
-        deleteGroupChat: async (_, { groupChatUuid, }, { prisma, getLoggedInUserDetails }) => {
+        deleteGroupChat: async (_, { groupChatUuid }, { prisma, getLoggedInUserDetails }) => {
             try {
                 if (!getLoggedInUserDetails) {
                     return {
                         code: "401",
                         message: "unauthorized",
-                        groupChat: null
+                        groupChat: null,
                     };
                 }
                 const groupChatIsDefinedBefore = await prisma.groupChat.findUnique({
@@ -342,14 +559,14 @@ const resolvers = {
                     },
                 });
                 return {
-                    code: '200',
-                    message: 'groupChat was deleted',
+                    code: "200",
+                    message: "groupChat was deleted",
                     groupChat: null,
                 };
             }
             catch (error) {
                 return {
-                    code: '400',
+                    code: "400",
                     message: `${error}`,
                     groupChat: null,
                 };
@@ -359,8 +576,8 @@ const resolvers = {
             try {
                 if (!getLoggedInUserDetails) {
                     return {
-                        code: '401',
-                        message: 'unauthorized',
+                        code: "401",
+                        message: "unauthorized",
                         groupChat: null,
                     };
                 }
@@ -371,8 +588,8 @@ const resolvers = {
                 });
                 if (!isGroupChatDefinedBefore) {
                     return {
-                        code: '404',
-                        message: 'group chat not found',
+                        code: "404",
+                        message: "group chat not found",
                         groupChat: null,
                     };
                 }
@@ -384,8 +601,8 @@ const resolvers = {
                 });
                 if (userMemberOfGroupChat.length > 0) {
                     return {
-                        code: '406',
-                        message: 'you member of this group',
+                        code: "406",
+                        message: "you member of this group",
                         groupChat: isGroupChatDefinedBefore,
                     };
                 }
@@ -399,29 +616,343 @@ const resolvers = {
                         },
                         member: {
                             connect: {
-                                uuid: getLoggedInUserDetails.uuid
+                                uuid: getLoggedInUserDetails.uuid,
                             },
                         },
                         isAdmin: false,
-                        isOwner: false,
-                    }
+                    },
                 });
                 return {
-                    code: '200',
-                    message: 'you joined this group',
+                    code: "200",
+                    message: "you joined this group",
                     groupChat: isGroupChatDefinedBefore,
                 };
             }
             catch (error) {
                 return {
-                    code: '400',
+                    code: "400",
                     message: `${error}`,
                     groupChat: null,
                 };
             }
-        }
+        },
+        leaveGroupChat: async (_, { groupChatUuid }, { prisma, getLoggedInUserDetails }) => {
+            try {
+                if (!getLoggedInUserDetails) {
+                    return {
+                        code: "401",
+                        message: "unauthorized",
+                        groupChat: null,
+                    };
+                }
+                const isGroupChatDefinedBefore = await prisma.groupChat.findUnique({
+                    where: {
+                        uuid: groupChatUuid,
+                    },
+                });
+                // Grup yoksa error vercek
+                if (!isGroupChatDefinedBefore) {
+                    return {
+                        code: "404",
+                        message: "group chat not found",
+                        groupChat: null,
+                    };
+                }
+                // Memberı al
+                const UserMember = await prisma.groupMember.findMany({
+                    where: {
+                        groupUuid: groupChatUuid,
+                    },
+                });
+                if (UserMember.length > 1) {
+                    UserMember.map(async (data) => {
+                        if (data.userUuid === getLoggedInUserDetails.uuid) {
+                            if (data.isAdmin === true) {
+                                // Owner sildik
+                                const groupChatOfMember = await prisma.groupMember.findMany({
+                                    where: {
+                                        groupUuid: groupChatUuid,
+                                        userUuid: getLoggedInUserDetails.uuid,
+                                    },
+                                    select: {
+                                        uuid: true,
+                                    },
+                                });
+                                await prisma.groupMember.delete({
+                                    where: {
+                                        uuid: groupChatOfMember[0].uuid,
+                                    },
+                                });
+                                const groupMemberLength = await prisma.groupMember.findMany({
+                                    where: {
+                                        groupUuid: groupChatUuid,
+                                    },
+                                });
+                                // Sayıyı azalttık
+                                await prisma.groupChat.update({
+                                    data: {
+                                        memberCount: groupMemberLength.length,
+                                    },
+                                    where: {
+                                        uuid: groupChatUuid,
+                                    },
+                                });
+                                // Eğer admin sayısı 1 ise en eski kullanıcı admin ve owner olcak
+                                if (isGroupChatDefinedBefore.memberCount === 1) {
+                                    // Burada en eski kullanıcı owner olacak
+                                    const Members = await prisma.groupMember.findMany({
+                                        where: {
+                                            groupUuid: groupChatUuid,
+                                        },
+                                        orderBy: { createdAt: "asc" },
+                                    });
+                                    // Yeni owner ataması
+                                    await prisma.groupChat.update({
+                                        data: {
+                                            ownerUserUuid: Members[0].userUuid,
+                                        },
+                                        where: {
+                                            uuid: groupChatUuid,
+                                        },
+                                    });
+                                    await prisma.groupMember.update({
+                                        data: {
+                                            isAdmin: true,
+                                        },
+                                        where: {
+                                            uuid: Members[0].uuid,
+                                        },
+                                    });
+                                    // Eski owner gönderdiği bildirimleri silicez
+                                    await prisma.notifications.deleteMany({
+                                        where: {
+                                            senderUuid: getLoggedInUserDetails.uuid, // Gönderen
+                                        },
+                                    });
+                                    return {
+                                        code: "200",
+                                        message: "Leaving",
+                                        groupChat: null,
+                                    };
+                                }
+                                // Burada en eski admin owner olacak
+                                const AdminMembers = await prisma.groupMember.findMany({
+                                    where: {
+                                        groupUuid: groupChatUuid,
+                                        isAdmin: true,
+                                    },
+                                    orderBy: { createdAt: "asc" },
+                                });
+                                // Yeni owner ataması
+                                await prisma.groupChat.update({
+                                    data: {
+                                        ownerUserUuid: AdminMembers[0].userUuid,
+                                    },
+                                    where: {
+                                        uuid: groupChatUuid,
+                                    },
+                                });
+                                return {
+                                    status: true,
+                                    error: "No error",
+                                };
+                            }
+                            await prisma.groupMember.deleteMany({
+                                where: {
+                                    groupUuid: groupChatUuid,
+                                    userUuid: getLoggedInUserDetails.uuid,
+                                },
+                            });
+                            const communityMemberLength = await prisma.groupMember.findMany({
+                                where: {
+                                    groupUuid: groupChatUuid,
+                                },
+                            });
+                            await prisma.groupChat.update({
+                                data: {
+                                    memberCount: communityMemberLength.length,
+                                },
+                                where: {
+                                    uuid: groupChatUuid,
+                                },
+                            });
+                            // Kullanıcının topluluğa girerken attığı bildirimi silip sonra tekrar ayrıldı bildirimi atıcaz
+                            await prisma.notifications.deleteMany({
+                                where: {
+                                    senderUuid: getLoggedInUserDetails.uuid,
+                                    recevierUuid: isGroupChatDefinedBefore.ownerUserUuid,
+                                },
+                            });
+                            await prisma.notifications.create({
+                                data: {
+                                    uuid: (0, uuid_1.v4)(),
+                                    content: "Member leave community",
+                                    senderUuid: getLoggedInUserDetails.uuid,
+                                    recevierUuid: isGroupChatDefinedBefore.ownerUserUuid,
+                                    groupUuid: groupChatUuid,
+                                },
+                            });
+                            return {
+                                code: "200",
+                                message: "leaving",
+                                groupChat: null,
+                            };
+                        }
+                        return {
+                            code: "200",
+                            message: "You are not member of this group",
+                            groupChat: null,
+                        };
+                    });
+                }
+                // Sadece 1 tane member varsa direkt topluluk silinecek
+                if (UserMember.length === 1) {
+                    await prisma.groupChat.delete({
+                        where: {
+                            uuid: groupChatUuid,
+                        },
+                    });
+                    return {
+                        status: true,
+                        error: "No error",
+                    };
+                }
+            }
+            catch (error) {
+                return {
+                    code: "400",
+                    message: `${error}`,
+                    groupChat: null,
+                };
+            }
+        },
     },
     Query: {
+        async userInbox(_, __, { prisma, getLoggedInUserDetails }) {
+            if (!getLoggedInUserDetails) {
+                return {
+                    node: [],
+                    error: "Unauthenticated",
+                };
+            }
+            // Let InboxUuid;
+            const userMessageBoxCacheKey = `messageBox: ${getLoggedInUserDetails.uuid}`;
+            // await redis.del(userMessageBoxCacheKey);
+            const userMessageBox = await redis_1.redis.lrange(userMessageBoxCacheKey, 0, -1);
+            console.log(userMessageBox);
+            if (userMessageBox.length === 0) {
+                // !! burada en son mesaja göre ayarlar
+                const UsersInbox = await prisma.messageBox.findMany({
+                    orderBy: {
+                        createdAt: "desc",
+                    },
+                });
+                const pipeline = await redis_1.redis.pipeline();
+                const node = await UsersInbox.map(async (UserInbox) => {
+                    // Const possible = [UserInbox.accepting, getLoggedInUserDetails.uuid];
+                    // const possibleI = [UserInbox.accepting, getLoggedInUserDetails.uuid];
+                    // Inbox uuid almak için basit bir sistem
+                    // InboxUuid = UserInbox.uuid;
+                    if (getLoggedInUserDetails.uuid === UserInbox.request) {
+                        const users = await prisma.user.findMany({
+                            where: {
+                                uuid: UserInbox.accepting,
+                            },
+                        });
+                        for (let index = 0; index < users.length; index += 1) {
+                            const user = users[index];
+                            // Console.log(user);
+                            user.InboxUuid = UserInbox.uuid;
+                            const userUuid = [
+                                UserInbox.accepting,
+                                getLoggedInUserDetails.uuid,
+                            ];
+                            const messages = await prisma.message.findMany({
+                                where: {
+                                    senderUuid: {
+                                        in: userUuid,
+                                    },
+                                    recipientUuid: {
+                                        in: userUuid,
+                                    },
+                                },
+                                orderBy: {
+                                    createdAt: "desc",
+                                },
+                            });
+                            console.log("first", messages);
+                            if (messages.length === 0) {
+                                user.lastMessage = "";
+                                pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(user));
+                                return user;
+                            }
+                            else {
+                                user.lastMessage = messages[0].text;
+                                pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(user));
+                                return user;
+                            }
+                        }
+                    }
+                    if (getLoggedInUserDetails.uuid === UserInbox.accepting) {
+                        const users = await prisma.user.findMany({
+                            where: {
+                                uuid: UserInbox.request,
+                            },
+                        });
+                        for (let index = 0; index < users.length; index += 1) {
+                            const user = users[index];
+                            // Console.log(user);
+                            user.InboxUuid = UserInbox.uuid;
+                            const userUuid = [
+                                UserInbox.request,
+                                getLoggedInUserDetails.uuid,
+                            ];
+                            const messages = await prisma.message.findMany({
+                                where: {
+                                    senderUuid: {
+                                        in: userUuid,
+                                    },
+                                    recipientUuid: {
+                                        in: userUuid,
+                                    },
+                                },
+                                orderBy: {
+                                    createdAt: "desc",
+                                },
+                            });
+                            if (messages[0] === null) {
+                                user.lastMessage = "";
+                                pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(user));
+                                return user;
+                            }
+                            user.lastMessage = messages[0].text;
+                            pipeline.lpush(userMessageBoxCacheKey, JSON.stringify(user));
+                            return user;
+                        }
+                    }
+                    else {
+                        return [];
+                    }
+                    // Console.log(users);
+                });
+                await Promise.all(node); // Beklemek için Promise.all kullanılır.
+                await pipeline.expire(userMessageBoxCacheKey, 300);
+                await pipeline.exec();
+                return {
+                    node: node,
+                    error: "No error",
+                };
+            }
+            else {
+                const node = userMessageBox.map((messageBox) => {
+                    return JSON.parse(messageBox);
+                });
+                return {
+                    node,
+                    error: "No error",
+                };
+            }
+        },
         getLoggedInUserDetails: async (_, __, { prisma, getLoggedInUserDetails }) => {
             try {
                 if (!getLoggedInUserDetails) {
@@ -435,7 +966,7 @@ const resolvers = {
                 user.isOnline = getLoggedInUserDetails.isOnline;
                 return {
                     code: "200",
-                    message: 'Showing loggedInUserDetails',
+                    message: "Showing loggedInUserDetails",
                     user,
                 };
             }
@@ -443,18 +974,305 @@ const resolvers = {
                 throw new Error(e);
             }
         },
+        getUserDetailsByUuid: async (_, { userUuid }, { prisma, getLoggedInUserDetails }) => {
+            try {
+                if (!getLoggedInUserDetails) {
+                    return {
+                        code: "401",
+                        message: "unauthorized",
+                        user: null,
+                    };
+                }
+                const getUser = await prisma.user.findUnique({
+                    where: {
+                        uuid: userUuid,
+                    },
+                });
+                if (!getUser) {
+                    return {
+                        code: "404",
+                        message: "user not found",
+                        user: null,
+                    };
+                }
+                return {
+                    code: "200",
+                    message: "showing",
+                    user: getUser,
+                };
+            }
+            catch (error) {
+                return {
+                    code: "400",
+                    message: `${error}`,
+                    user: null,
+                };
+            }
+        },
+        getLoggedInUserGroups: async (_, { limit, offset }, { prisma, getLoggedInUserDetails }) => {
+            try {
+                if (!getLoggedInUserDetails) {
+                    return {
+                        code: "401",
+                        message: "unauthorized",
+                        group: [],
+                    };
+                }
+                const userMemberOfGroupChat = await prisma.groupMember.findMany({
+                    where: {
+                        userUuid: getLoggedInUserDetails.uuid,
+                    },
+                    take: limit,
+                    skip: offset,
+                });
+                if (userMemberOfGroupChat.length === 0) {
+                    return {
+                        code: "200",
+                        message: "You have not joined any group",
+                        group: [],
+                    };
+                }
+                const userGroup = userMemberOfGroupChat.map(async (UserMemeber) => {
+                    const joinedGroup = await prisma.groupChat.findMany({
+                        where: {
+                            uuid: UserMemeber.groupUuid,
+                        },
+                    });
+                    for (let index = 0; index < joinedGroup.length; index += 1) {
+                        const element = joinedGroup[index];
+                        return element;
+                    }
+                });
+                return {
+                    code: "200",
+                    message: "Showing",
+                    group: userGroup,
+                };
+            }
+            catch (error) {
+                return {
+                    code: "400",
+                    message: `${error}`,
+                    group: [],
+                };
+            }
+        },
+        async messages(_, { recipientUserUuid, limit, offset, }, { prisma, getLoggedInUserDetails }) {
+            try {
+                if (!getLoggedInUserDetails) {
+                    throw new Error("Unauthenticated");
+                }
+                const user = await prisma.user.findUnique({
+                    where: {
+                        uuid: recipientUserUuid,
+                    },
+                });
+                if (!user) {
+                    throw new Error("User not found");
+                }
+                const userUuid = [user.uuid, getLoggedInUserDetails.uuid];
+                return await prisma.message.findMany({
+                    where: {
+                        senderUuid: {
+                            in: userUuid,
+                        },
+                        recipientUuid: {
+                            in: userUuid,
+                        },
+                    },
+                    take: limit,
+                    skip: offset,
+                    orderBy: {
+                        createdAt: "desc",
+                    },
+                    // İnclude: [{model: Reaction, as: 'reactions'}],
+                });
+            }
+            catch (error) {
+                throw new Error(error);
+            }
+        },
+        getMessageForGroup: async (_, { groupChatUuid, limit, offset, }, { prisma, getLoggedInUserDetails }) => {
+            try {
+                if (!getLoggedInUserDetails) {
+                    return {
+                        code: "401",
+                        message: "unauthorized",
+                        messages: [],
+                    };
+                }
+                const isGroupChatDefinedBefore = await prisma.groupChat.findUnique({
+                    where: {
+                        uuid: groupChatUuid,
+                    },
+                });
+                if (!isGroupChatDefinedBefore) {
+                    return {
+                        code: "404",
+                        message: "group not found",
+                        messages: [],
+                    };
+                }
+                const groupMessage = await prisma.message.findMany({
+                    where: {
+                        groupChatUuid,
+                    },
+                    skip: offset,
+                    take: limit,
+                });
+                const messages = groupMessage.map((message) => message);
+                return {
+                    code: "200",
+                    message: "Message showing",
+                    messages,
+                };
+            }
+            catch (error) {
+                return {
+                    code: "400",
+                    message: `${error}`,
+                    messages: [],
+                };
+            }
+        },
+        searchUser: async (_, { username }, { prisma }) => {
+            try {
+                // İf only full_name
+                // İf only Username
+                if (username) {
+                    // İf Username is null
+                    if (username.trim() === "") {
+                        return "";
+                    }
+                    // İf Username is not null
+                    const user = await prisma.user.findMany({
+                        where: {
+                            // Op.like mysql Like komutu demek
+                            // Username den gelen veri ile user db de arama yapıyor
+                            // e ile ilgili veri girdiyse db de Username'in içinde  e olan olan tüm kullanıcıları getiriyor
+                            username: {
+                                contains: username,
+                                mode: "insensitive",
+                            },
+                        },
+                        take: 4,
+                    });
+                    return user.map(async (SearchedUser) => SearchedUser);
+                }
+                return true;
+            }
+            catch (error) {
+                throw new Error(error);
+            }
+        },
+        searchGroupChat: async (_, { groupChatName }, { prisma, getLoggedInUserDetails }) => {
+            try {
+                if (!getLoggedInUserDetails) {
+                    return {
+                        code: "401",
+                        message: "unauthorized",
+                        group: [],
+                    };
+                }
+                const groups = await prisma.groupChat.findMany({
+                    where: {
+                        groupName: {
+                            contains: groupChatName,
+                            mode: "insensitive",
+                        },
+                    },
+                    select: {
+                        description: true,
+                        groupAvatarUrl: true,
+                        groupName: true,
+                        memberCount: true,
+                    },
+                });
+                const group = groups.map((grp) => grp);
+                return {
+                    code: "200",
+                    message: "Showing search result",
+                    group,
+                };
+            }
+            catch (error) {
+                return {
+                    code: "400",
+                    message: `${error}`,
+                    group: [],
+                };
+            }
+        },
+        searchGroupMessage: async (_, { groupChatUuid, searchMessage, }, { prisma, getLoggedInUserDetails }) => {
+            try {
+                if (!getLoggedInUserDetails) {
+                    return {
+                        code: "401",
+                        message: "unauthorized",
+                        messages: [],
+                    };
+                }
+                const isGroupChatDefinedBefore = await prisma.groupChat.findUnique({
+                    where: {
+                        uuid: groupChatUuid,
+                    },
+                });
+                if (!isGroupChatDefinedBefore) {
+                    return {
+                        code: "404",
+                        message: "group is not found",
+                        messages: [],
+                    };
+                }
+                const messages = await prisma.message.findMany({
+                    where: {
+                        groupChatUuid: groupChatUuid,
+                        text: {
+                            contains: searchMessage,
+                            mode: "insensitive",
+                        },
+                    },
+                });
+                const message = messages.map((msg) => msg);
+                return {
+                    code: "200",
+                    message: "showing result",
+                    messages: message,
+                };
+            }
+            catch (error) {
+                return {
+                    code: "400",
+                    message: `${error}`,
+                    messages: [],
+                };
+            }
+        },
     },
     Subscription: {
-        // BURADA CLIENT KISMINDA ON CONNECTED YAP 
-        // BURADAKİ SUBS QUERY SİL 
+        // BURADA CLIENT KISMINDA ON CONNECTED YAP
+        // BURADAKİ SUBS QUERY SİL
+        messageSent: {
+            subscribe: (0, graphql_subscriptions_1.withFilter)(() => pubsub_1.default.asyncIterator("newMessage"), ({ newMessage }, args) => {
+                console.log(newMessage);
+                return (newMessage.senderUuid === args.userUuid ||
+                    newMessage.recipientUuid === args.userUuid);
+            }),
+        },
+        newMessage: {
+            subscribe: (0, graphql_subscriptions_1.withFilter)(() => pubsub_1.default.asyncIterator("newMessage"), ({ newMessage }, args) => {
+                return (newMessage.senderUuid === args.userUuid ||
+                    newMessage.recipientUuid === args.userUuid);
+            }),
+        },
         userStatus: {
-            subscribe: (0, graphql_subscriptions_1.withFilter)(() => pubsub_1.default.asyncIterator('USER_LOGIN'), (payload, variables) => {
+            subscribe: (0, graphql_subscriptions_1.withFilter)(() => pubsub_1.default.asyncIterator("USER_LOGIN"), (payload, variables) => {
                 // Only push an update if the comment is on
                 // the correct repository for this operation
                 return true;
             }),
-        }
-    }
+        },
+    },
 };
 exports.default = resolvers;
 //# sourceMappingURL=resolver.js.map

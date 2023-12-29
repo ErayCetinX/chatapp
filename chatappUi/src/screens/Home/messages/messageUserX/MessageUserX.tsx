@@ -23,7 +23,7 @@ interface Props {
 }
 
 const MessageUserX: React.FC<Props> = props => {
-  const { recipientUserUuid, UserAvatar, UserName, boxUuid } =
+  const { recipientUserUuid, UserAvatar, UserName, boxUuid,createdAt } =
     props.route.params;
 
   const activeUser = useSelector<State, getLoggedInUserDetailsType>(state => state.getLoggedInUserDetails);
@@ -49,7 +49,7 @@ const MessageUserX: React.FC<Props> = props => {
 
   return (
     <View style={{ height: '100%' }}>
-      <MessageHeader UserAvatar={UserAvatar} UserName={UserName} />
+      <MessageHeader UserAvatar={UserAvatar} UserName={UserName} createdAt={createdAt} />
       <View style={{ flex: 1, height: '100%' }}>
         <FlashList
           estimatedItemSize={100}

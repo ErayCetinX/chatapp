@@ -42,8 +42,8 @@ const MessageHeader: React.FC<Props> = ({ UserName, UserAvatar }) => {
               activeOpacity={0.8}
               onPress={() => {
                 navigation.navigate('Profile', {
-                  screen: 'Profil',
-                  UserName,
+                  username: UserName,
+                  avatarUrl: UserAvatar,
                 });
               }}>
               <Image
@@ -57,8 +57,8 @@ const MessageHeader: React.FC<Props> = ({ UserName, UserAvatar }) => {
               activeOpacity={0.8}
               onPress={() => {
                 navigation.navigate('Profile', {
-                  screen: 'Profil',
-                  UserName,
+                  username: UserName,
+                  avatarUrl: UserAvatar,
                 });
               }}>
               <Text

@@ -12,7 +12,9 @@ import Items from '../../../../components/messages/items/Items';
 const MessageBox = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const { data, loading, refetch } = useQuery(UserInboxQuery);
+  const asd = useQuery(UserInboxQuery);
+  const { data, loading, refetch } = asd;
+  console.log(asd);
 
   const onRefreshData = () => {
     setIsRefreshing(false);
@@ -67,6 +69,7 @@ const MessageBox = () => {
                           username={item?.username}
                           uuid={item?.uuid}
                           InboxUuid={item?.InboxUuid}
+                          createdAt={item?.createdAt}
                         />
                       );
                     }}
